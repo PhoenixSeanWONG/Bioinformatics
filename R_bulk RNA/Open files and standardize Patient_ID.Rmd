@@ -1,0 +1,480 @@
+## Open files and standardize Patient_ID
+### ptmeta
+```{r}
+library(readr)
+# Read CSV file:ptmeta_subtype_purity
+ptmeta_subtype_purity <- read_csv("/Users/wangxin/Desktop/BINF90008/jess_code_v1/ptmeta_subtype_purity.csv")
+
+table(ptmeta_subtype_purity$PMID)
+```   
+
+```{r}
+# Relevant column name as SampleID"
+# Add a new column to remove the last four digits
+library(dplyr)
+ptmeta_subtype_purity <- ptmeta_subtype_purity %>%
+  mutate(NewPatientID = substr(`patient_id(pt)`, 1, nchar(`patient_id(pt)`) - 4))
+
+head(ptmeta_subtype_purity)
+```
+
+### Gide
+```{r}
+library(readxl)
+library(readr)
+library(data.table)
+```
+
+```{r}
+clinical_data_Gide1 <- read_delim("/Users/wangxin/Desktop/BINF90008/study_materials/Gide2019_PD1_Melanoma_RNASeq/ICB.Gide2019_Pembrolizumab-Nivolumab_Melanoma.clinical", delim = "\t")
+
+head(clinical_data_Gide1)
+```
+
+```{r}
+clinical_data_Gide2 <- read_delim("/Users/wangxin/Desktop/BINF90008/study_materials/Gide2019_PD1+CTLA4_Melanoma_RNASeq/ICB.Gide2019_Pembrolizumab-Nivolumab+Ipilimumab_Melanoma.clinical", delim = "\t")
+
+head(clinical_data_Gide2)
+```
+
+#### Gide Patient_ID standrization
+```{r}
+# Put Treatment prefix on ID
+add_treatment_prefix <- function(df, treatment_prefix) {
+  df$...1 <- paste0(treatment_prefix, df$...1)
+  return(df)
+}
+
+# Add a prefix to two data frames
+clinical_data_Gide1 <- add_treatment_prefix(clinical_data_Gide1, "PD1_")
+clinical_data_Gide2 <- add_treatment_prefix(clinical_data_Gide2, "ipiPD1_")
+
+clinical_data_Gide1$PMID <- "gide"
+clinical_data_Gide2$PMID <- "gide"
+
+head(clinical_data_Gide1)
+head(clinical_data_Gide2)
+```
+
+### Hugo
+```{r}
+clinical_data_Hugo <- read_delim("/Users/wangxin/Desktop/BINF90008/study_materials/Hugo2016_PD1_Melanoma_RNASeq/ICB.Hugo2016_Pembrolizumab_Melanoma.clinical", delim = "\t")
+
+head(clinical_data_Hugo)
+```
+
+#### Hugo Patient_ID standrization
+```{r}
+clinical_data_Hugo$PMID <- "hugo"
+```
+
+### Riaz
+```{r}
+# Read Excel file
+clinical_data_Riaz_N <- read_delim("/Users/wangxin/Desktop/BINF90008/study_materials/Riaz2017_PD1_Melanoma_RNASeq_Ipi.Naive/ICB.Riaz2017_Nivolumab_Melanoma_Naive.clinical", delim = "\t")
+
+head(clinical_data_Riaz_N)
+```
+
+```{r}
+clinical_data_Riaz_P <- read_delim("/Users/wangxin/Desktop/BINF90008/study_materials/Riaz2017_PD1_Melanoma_RNASeq_Ipi.Prog/ICB.Riaz2017_Nivolumab_Melanoma_Prog.clinical", delim = "\t")
+
+head(clinical_data_Riaz_P)
+```
+
+#### Riaz Patient_ID standrization
+```{r}
+clinical_data_Riaz_N$PMID <- "riaz"
+clinical_data_Riaz_P$PMID <- "riaz"
+```
+
+
+## Selection of PFS, OS and RECIST programs
+```{r}
+# Extract and rename ID columns
+extract_from_clinical_files <- function(df) {
+  df_subset <- df[, c("...1", "OS", "PFS", "RECIST","PMID","PFS.Event","OS.Event")]
+  colnames(df_subset)[colnames(df_subset) == "...1"] <- "Patient_ID"
+  return(df_subset)
+}
+
+# Extract data
+data_Gide1 <- extract_from_clinical_files(clinical_data_Gide1)
+data_Gide2 <- extract_from_clinical_files(clinical_data_Gide2)
+data_Riaz_N <- extract_from_clinical_files(clinical_data_Riaz_N)
+data_Riaz_P <- extract_from_clinical_files(clinical_data_Riaz_P)
+
+# Merge all data frames
+combined_for_grouping<- rbind(data_Gide1, data_Gide2, data_Riaz_N, data_Riaz_P)
+
+head(combined_for_grouping)
+```
+
+```{r}
+# Extract and rename the columns of clinical_data_Hugo
+clinical_data_Hugo_subset <- clinical_data_Hugo[, c("OS", "OS.Event", "RECIST", "PMID")]
+colnames(clinical_data_Hugo_subset) <- c("Patient_ID", "OS", "RECIST", "PMID")
+
+# Add PFS column, populate NA
+clinical_data_Hugo_subset$PFS <- NA
+clinical_data_Hugo_subset$PFS_Group <- NA
+clinical_data_Hugo_subset$PFS.Event <- NA
+clinical_data_Hugo_subset$OS.Event <- 1
+
+# Reorder columns
+clinical_data_Hugo_subset <- clinical_data_Hugo_subset[, c("Patient_ID", "OS", "PFS", "RECIST", "PMID", "PFS.Event", "OS.Event")]
+```
+
+```{r}
+# Merging data frames
+combined_for_grouping_withHugo <- rbind(combined_for_grouping, clinical_data_Hugo_subset)
+
+head(combined_for_grouping_withHugo)
+```
+
+```{r}
+combined_for_grouping_withHugo <- subset(combined_for_grouping_withHugo, !is.na(OS))
+any(is.na(combined_for_grouping_withHugo$OS))
+```
+
+## Grouping
+```{r}
+pfs_threshold <- 200  # days
+os_threshold <- 400   # days
+
+# Defining Grouping Functions
+define_pfs_group <- function(pfs, pfs_threshold) {
+  if (pfs >= pfs_threshold) {
+    return("PFS_Long")
+  } else {
+    return("PFS_Short")
+  }
+}
+
+define_os_group <- function(os, os_threshold) {
+  if (os >= os_threshold) {
+    return("OS_Long")
+  } else {
+    return("OS_Short")
+  }
+}
+```
+
+```{r}
+combined_for_grouping$PFS_Group <- ifelse(
+  combined_for_grouping$PFS.Event == 1, 
+  mapply(define_pfs_group, 
+         combined_for_grouping$PFS, 
+         MoreArgs = list(pfs_threshold = pfs_threshold)), 
+  NA
+)
+
+head(combined_for_grouping)
+table(combined_for_grouping$PFS_Group, useNA = "ifany")
+```
+
+```{r}
+combined_for_grouping$OS_Group <- ifelse(
+  combined_for_grouping$OS.Event == 1, 
+  mapply(define_os_group, 
+         combined_for_grouping$OS, 
+         MoreArgs = list(os_threshold = os_threshold)), 
+  NA
+)
+
+head(combined_for_grouping)
+table(combined_for_grouping$OS_Group, useNA = "ifany")
+```
+
+### Integration
+```{r}
+combined_gide <- combined_for_grouping %>%
+  filter(PMID == "gide") %>%
+  inner_join(ptmeta_subtype_purity, by = c("Patient_ID" = "NewPatientID"))
+```
+
+```{r}
+combined_riaz <- combined_for_grouping %>%
+  filter(PMID == "riaz") %>%
+  inner_join(ptmeta_subtype_purity, by = c("Patient_ID" = "patient_id(pt)"))
+```
+
+```{r}
+combined_for_grouping_withHugo <- combined_for_grouping_withHugo[combined_for_grouping_withHugo$PMID == "hugo", ]
+combined_for_grouping_withHugo$OS_Group <- ifelse(combined_for_grouping_withHugo$OS >= os_threshold, "OS_Long", "OS_Short")
+```
+
+```{r}
+library(stringr)
+combined_for_grouping_withHugo <- combined_for_grouping_withHugo %>%
+  mutate(Patient_ID = str_remove(Patient_ID, "Pt"))
+```
+
+```{r}
+combined_hugo <- combined_for_grouping_withHugo %>%
+  filter(PMID == "hugo") %>%
+  inner_join(ptmeta_subtype_purity, by = c("Patient_ID" = "patient_id(pt)"))
+```
+
+```{r}
+final_combined <- bind_rows(combined_gide, combined_riaz)
+combined_hugo$PFS_Group <- NA
+combined_hugo$`patient_id(pt)` <- combined_hugo$Patient_ID
+final_combined_withHugo <- bind_rows(final_combined, combined_hugo)
+```
+
+```{r}
+final_combined_withHugo_PFS <- final_combined_withHugo %>%
+  filter(PFS.Event == 1)
+
+final_combined_withHugo_PFS <- final_combined_withHugo_PFS %>%
+  mutate(RECIST_Group = case_when(
+    RECIST %in% c(0, 1) ~ "RECIST = 0,1",
+    RECIST %in% c(2, 3) ~ "RECIST = 2,3",
+    TRUE ~ NA_character_
+  ))
+```
+```{r}
+ggplot(final_combined_withHugo_PFS, aes(x = PFS, fill = RECIST_Group)) +
+  geom_density(alpha = 0.5) + 
+  labs(
+    title = "Density Plot by RECIST Group",
+    x = "PFS",
+    y = "Density",
+    fill = "RECIST Group"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+write.csv(final_combined_withHugo, file = "/Users/wangxin/Desktop/BINF90008/study_materials/final_combined_withHugo.csv", row.names = FALSE)
+```
+
+```{r}
+RECIST_gide <- final_combined[final_combined$PMID.x == "riaz", ]
+table(RECIST_gide$RECIST)
+```
+
+```{r}
+# install.packages("dplyr")
+library(dplyr)
+
+# Create a crosstab showing the frequency of recist in each group
+cross_table_Group_RECIST <- final_combined %>%
+  group_by(PFS_Group,OS_Group, RECIST) %>%
+  summarise(Frequency = n()) %>%
+  ungroup()
+
+# Show cross-tabulation
+print(cross_table_Group_RECIST)
+```
+
+```{r}
+write.csv(cross_table_Group_RECIST, "/Users/wangxin/Desktop/BINF90008/study_materials/cross_table_Group_RECIST.csv", row.names = FALSE)
+```
+
+## Modification of normalisation of life and death of patients in tables
+### Hugo
+```{r}
+library(readxl)
+library(writexl)
+```
+
+```{r}
+file_path_hugo <- "/Users/wangxin/Desktop/BINF90008/study_materials/Hugo_mmc1.xlsx"
+outcome_hugo <- read_excel(file_path_hugo)
+
+print(colnames(outcome_hugo))
+
+# Modify column name
+colnames(outcome_hugo)[colnames(outcome_hugo) == "Vital Status"] <- "Dead/Alive(Dead = True)"
+
+print(colnames(outcome_hugo))
+
+print(unique(outcome_hugo$`Dead/Alive(Dead = True)`))
+
+# Modify dead and alive to BOOL
+outcome_hugo$`Dead/Alive(Dead = True)` <- ifelse(outcome_hugo$`Dead/Alive(Dead = True)` == "Alive", FALSE, 
+                                         ifelse(outcome_hugo$`Dead/Alive(Dead = True)` == "Dead", TRUE, outcome_hugo$`Dead/Alive(Dead = True)`))
+
+print(unique(outcome_hugo$`Dead/Alive(Dead = True)`))
+
+write_xlsx(outcome_hugo, "/Users/wangxin/Desktop/BINF90008/study_materials/Modified_Hugo_mmc1.xlsx")
+```
+
+### Gide1
+```{r}
+file_path_gide1 <- "/Users/wangxin/Desktop/BINF90008/study_materials/Gide_mmc2.xlsx"
+outcome_gide1 <- read_excel(file_path_gide1)
+
+print(colnames(outcome_gide1))
+
+# Modify column contents
+colnames(outcome_gide1)[colnames(outcome_gide1) == "Last Followup Status"] <- "Dead/Alive(Dead = True)"
+
+print(colnames(outcome_gide1))
+
+print(unique(outcome_gide1$`Dead/Alive(Dead = True)`))
+
+# Modify dead and alive to BOOL
+outcome_gide1$`Dead/Alive(Dead = True)` <- ifelse(outcome_gide1$`Dead/Alive(Dead = True)` == "Alive", FALSE, 
+                                         ifelse(outcome_gide1$`Dead/Alive(Dead = True)` %in% c("Dead", "Dead, melanoma"), TRUE, outcome_gide1$`Dead/Alive(Dead = True)`))
+
+print(unique(outcome_gide1$`Dead/Alive(Dead = True)`))
+
+write_xlsx(outcome_gide1, "/Users/wangxin/Desktop/BINF90008/study_materials/Modified_Gide_mmc2.xlsx")
+```
+
+### Gide2
+```{r}
+file_path_gide2 <- "/Users/wangxin/Desktop/BINF90008/study_materials/Gide_mmc3.xlsx"
+outcome_gide2 <- read_excel(file_path_gide2)
+
+print(colnames(outcome_gide2))
+
+# Modify column contents
+colnames(outcome_gide2)[colnames(outcome_gide2) == "Last Followup Status"] <- "Dead/Alive(Dead = True)"
+
+print(colnames(outcome_gide2))
+
+print(unique(outcome_gide2$`Dead/Alive(Dead = True)`))
+
+# Modify dead and alive to BOOL
+outcome_gide2$`Dead/Alive(Dead = True)` <- ifelse(outcome_gide2$`Dead/Alive(Dead = True)` == "Alive", FALSE, 
+                                         ifelse(outcome_gide2$`Dead/Alive(Dead = True)` %in% c("Dead", "Dead, melanoma"), TRUE, outcome_gide2$`Dead/Alive(Dead = True)`))
+
+print(unique(outcome_gide2$`Dead/Alive(Dead = True)`))
+
+write_xlsx(outcome_gide2, "/Users/wangxin/Desktop/BINF90008/study_materials/Modified_Gide_mmc3.xlsx")
+```
+
+#### Modify Gide's Patient No.
+```{r}
+file_path_modified_gide1 <- "/Users/wangxin/Desktop/BINF90008/study_materials/Modified_Gide_mmc2.xlsx"
+modified_gide1 <- read_excel(file_path_modified_gide1)
+
+print(colnames(modified_gide1))
+
+# Modify data in Patient no. column by adding "PD1_" in front of it
+modified_gide1$`Patient no.` <- paste0("PD1_", modified_gide1$`Patient no.`)
+
+print(head(modified_gide1$`Patient no.`))
+
+write_xlsx(modified_gide1, "/Users/wangxin/Desktop/BINF90008/study_materials/Modified_Patient_Gide_mmc2.xlsx")
+```
+
+```{r}
+file_path_modified_gide2 <- "/Users/wangxin/Desktop/BINF90008/study_materials/Modified_Gide_mmc3.xlsx"
+modified_gide2 <- read_excel(file_path_modified_gide2)
+
+print(colnames(modified_gide2))
+
+# Modify data in Patient no. column by adding "PD1_" in front of it
+modified_gide2$`Patient no.` <- paste0("ipiPD1_", modified_gide2$`Patient no.`)
+
+print(head(modified_gide2$`Patient no.`))
+
+write_xlsx(modified_gide2, "/Users/wangxin/Desktop/BINF90008/study_materials/Modified_Patient_Gide_mmc3.xlsx")
+```
+
+```{r}
+file_path_modified_patient_gide1 <- "/Users/wangxin/Desktop/BINF90008/study_materials/Modified_Patient_Gide_mmc2.xlsx"
+modified_patient_gide1 <- read_excel(file_path_modified_patient_gide1)
+
+print(colnames(modified_patient_gide1))
+
+# Select Patient and Dead/Alive (Dead = True) columns
+gide1_selected_columns <- modified_patient_gide1[, c("Patient no.", "Dead/Alive(Dead = True)")]
+colnames(gide1_selected_columns)[colnames(gide1_selected_columns) == "Patient no."] <- "Patient"
+
+# Add PMID column with "gide"
+gide1_selected_columns$PMID <- "gide"
+
+print(head(gide1_selected_columns))
+
+write_xlsx(gide1_selected_columns, "/Users/wangxin/Desktop/BINF90008/study_materials/Selected_Patient_Dead_Alive_with_PMID_gide2.xlsx")
+```
+
+```{r}
+file_path_modified_patient_gide2 <- "/Users/wangxin/Desktop/BINF90008/study_materials/Modified_Patient_Gide_mmc3.xlsx"
+modified_patient_gide2 <- read_excel(file_path_modified_patient_gide2)
+
+print(colnames(modified_patient_gide2))
+
+# Select Patient and Dead/Alive (Dead = True) columns
+gide2_selected_columns <- modified_patient_gide2[, c("Patient no.", "Dead/Alive(Dead = True)")]
+colnames(gide2_selected_columns)[colnames(gide2_selected_columns) == "Patient no."] <- "Patient"
+
+# Add PMID column with "gide"
+gide2_selected_columns$PMID <- "gide"
+
+print(head(gide2_selected_columns))
+
+write_xlsx(gide2_selected_columns, "/Users/wangxin/Desktop/BINF90008/study_materials/Selected_Patient_Dead_Alive_with_PMID_gide3.xlsx")
+```
+
+```{r}
+file_path_modified_hugo <- "/Users/wangxin/Desktop/BINF90008/study_materials/Modified_Hugo_mmc1.xlsx"
+modified_hugo <- read_excel(file_path_modified_hugo)
+
+print(colnames(modified_hugo))
+
+# Select Patient and Dead/Alive (Dead = True) columns
+hugo_selected_columns <- modified_hugo[, c("Patient ID", "Dead/Alive(Dead = True)")]
+colnames(hugo_selected_columns)[colnames(hugo_selected_columns) == "Patient ID"] <- "Patient"
+
+# Add PMID column with "gide"
+hugo_selected_columns$PMID <- "hugo"
+
+# Use regular expressions to preserve patient serial numbers beginning with ‘Pt’
+hugo_selected_columns <- hugo_selected_columns %>%
+  filter(grepl("^Pt\\d+$", Patient)) %>%
+  mutate(Patient = str_remove(Patient, "Pt"))
+
+print(head(hugo_selected_columns))
+
+write_xlsx(hugo_selected_columns, "/Users/wangxin/Desktop/BINF90008/study_materials/Selected_Patient_Dead_Alive_with_PMID_hugo.xlsx")
+```
+
+```{r}
+file_path_modified_riaz <- "/Users/wangxin/Desktop/BINF90008/study_materials/Riaz_mmc2.xlsx"
+modified_riaz <- read_excel(file_path_modified_riaz)
+
+print(colnames(modified_riaz))
+
+# Select Patient and Dead/Alive (Dead = True) columns
+riaz_selected_columns <- modified_riaz[, c("Patient", "Dead/Alive(Dead = True)")]
+
+# Add PMID column with "gide"
+riaz_selected_columns$PMID <- "riaz"
+
+print(head(riaz_selected_columns))
+
+write_xlsx(riaz_selected_columns, "/Users/wangxin/Desktop/BINF90008/study_materials/Selected_Patient_Dead_Alive_with_PMID_riaz.xlsx")
+```
+
+```{r}
+file_paths_combined <- c(
+  "/Users/wangxin/Desktop/BINF90008/study_materials/Selected_Patient_Dead_Alive_with_PMID_gide2.xlsx",
+  "/Users/wangxin/Desktop/BINF90008/study_materials/Selected_Patient_Dead_Alive_with_PMID_gide3.xlsx",
+  "/Users/wangxin/Desktop/BINF90008/study_materials/Selected_Patient_Dead_Alive_with_PMID_hugo.xlsx",
+  "/Users/wangxin/Desktop/BINF90008/study_materials/Selected_Patient_Dead_Alive_with_PMID_riaz.xlsx"
+)
+
+# Initialize an empty data frame
+combined_data <- data.frame()
+
+# Loop through each file and merge data
+for (file_path in file_paths_combined) {
+  data <- read_excel(file_path)
+  combined_data <- rbind(combined_data, data)
+}
+
+print(head(combined_data))
+print(dim(combined_data))
+```
+
+```{r}
+output_path <- "/Users/wangxin/Desktop/BINF90008/study_materials/Patient_Vital_Status.xlsx"
+write_xlsx(combined_data, output_path)
+```
